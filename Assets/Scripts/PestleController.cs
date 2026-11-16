@@ -4,12 +4,16 @@ using UnityEngine.InputSystem;
 
 public class PestleController : MonoBehaviour
 {
-    public DragIngredient ingredient;
+    [Header("Mortar")]
     public Collider2D mortarCollider;
+
+    [Header("Ingredients")]
+    public DragIngredient herb;
+    public IngredientSelector[] otherIngredients;
 
     private Camera mainCamera;
     private SpriteRenderer spriteRenderer;
-    private GrindIngredient grind;
+    private GrindIngredient herbGrind;
     private Vector3 startPosition;
 
     void Start()
@@ -18,8 +22,8 @@ public class PestleController : MonoBehaviour
         spriteRenderer = GetComponent<SpriteRenderer>();
         startPosition = transform.position;
 
-        if (ingredient != null)
-            grind = ingredient.GetComponent<GrindIngredient>();
+        if (herb != null)
+            herbGrind = herb.GetComponent<GrindIngredient>();
 
         spriteRenderer.enabled = false;
     }
@@ -28,18 +32,9 @@ public class PestleController : MonoBehaviour
     {
         if (Mouse.current == null ||
             mainCamera == null ||
-            ingredient == null ||
-            mortarCollider == null ||
-            grind == null)
+            mortarCollider == null)
         {
-            spriteRenderer.enabled = false;
-            return;
-        }
-
-        // Не показываем пестик после измельчения
-        if (!ingredient.IsInMortar || grind.IsFinished)
-        {
-            spriteRenderer.enabled = false;
+            HidePestle();
             return;
         }
 
@@ -58,8 +53,37 @@ public class PestleController : MonoBehaviour
         bool insideMortar =
             mortarCollider.OverlapPoint(worldPosition);
 
+        bool canGrind = false;
+
+        // Проверяем обычную траву
+        if (herb != null &&
+            herbGrind != null &&
+            herb.IsInMortar &&
+            !herbGrind.IsFinished)
+        {
+            canGrind = true;
+        }
+
+        // Проверяем остальные ингредиенты
+        if (otherIngredients != null)
+        {
+            foreach (IngredientSelector ingredient
+                in otherIngredients)
+            {
+                if (ingredient != null &&
+                    ingredient.IsSelected &&
+                    !ingredient.IsGround)
+                {
+                    canGrind = true;
+                    break;
+                }
+            }
+        }
+
         bool showPestle =
-            Mouse.current.leftButton.isPressed && insideMortar;
+            canGrind &&
+            Mouse.current.leftButton.isPressed &&
+            insideMortar;
 
         spriteRenderer.enabled = showPestle;
 
@@ -71,5 +95,11 @@ public class PestleController : MonoBehaviour
                 startPosition.z
             );
         }
+    }
+
+    void HidePestle()
+    {
+        if (spriteRenderer != null)
+            spriteRenderer.enabled = false;
     }
 }

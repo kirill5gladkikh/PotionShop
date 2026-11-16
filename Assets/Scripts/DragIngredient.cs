@@ -6,6 +6,7 @@ public class DragIngredient : MonoBehaviour
 {
     [Header("Ingredient")]
     public Collider2D mortarCollider;
+    public IngredientManager ingredientManager;
 
     [Header("Bottle Filling")]
     public GrindIngredient grindIngredient;
@@ -77,13 +78,11 @@ public class DragIngredient : MonoBehaviour
 
         Vector3 mousePosition = GetMouseWorldPosition();
 
-        if (Mouse.current.leftButton.wasPressedThisFrame)
+        if (Mouse.current.leftButton.wasPressedThisFrame &&
+            ingredientCollider.OverlapPoint(mousePosition))
         {
-            if (ingredientCollider.OverlapPoint(mousePosition))
-            {
-                isDragging = true;
-                offset = transform.position - mousePosition;
-            }
+            isDragging = true;
+            offset = transform.position - mousePosition;
         }
 
         if (isDragging && Mouse.current.leftButton.isPressed)
@@ -91,20 +90,35 @@ public class DragIngredient : MonoBehaviour
             transform.position = mousePosition + offset;
         }
 
-        if (isDragging && Mouse.current.leftButton.wasReleasedThisFrame)
+        if (isDragging &&
+            Mouse.current.leftButton.wasReleasedThisFrame)
         {
             isDragging = false;
 
             if (mortarCollider != null &&
                 mortarCollider.OverlapPoint(transform.position))
             {
-                Vector3 target = mortarCollider.transform.position;
-                target.z = transform.position.z;
+                bool accepted =
+                    ingredientManager != null &&
+                    ingredientManager.TrySelectIngredient(name);
 
-                transform.position = target;
-                isInMortar = true;
+                if (accepted)
+                {
+                    Vector3 target = ingredientManager.GetIngredientPosition(
+    mortarCollider.transform.position,
+    name
+);
 
-                Debug.Log("Herb placed in mortar!");
+                    target.z = transform.position.z;
+                    transform.position = target;
+                    isInMortar = true;
+
+                    Debug.Log("Herb placed in mortar!");
+                }
+                else
+                {
+                    transform.position = startPosition;
+                }
             }
             else
             {
@@ -128,9 +142,7 @@ public class DragIngredient : MonoBehaviour
             bottleCollider.OverlapPoint(mousePosition);
 
         if (Mouse.current.leftButton.wasPressedThisFrame)
-        {
             isFilling = insideBottle;
-        }
 
         if (Mouse.current.leftButton.wasReleasedThisFrame ||
             !insideBottle)
@@ -145,11 +157,9 @@ public class DragIngredient : MonoBehaviour
 
             fillProgress = Mathf.Clamp01(fillProgress);
 
-            float targetHeight = 0.62f;
-
             float newHeight = Mathf.Lerp(
                 liquidStartScale.y,
-                targetHeight,
+                0.62f,
                 fillProgress
             );
 
@@ -163,7 +173,7 @@ public class DragIngredient : MonoBehaviour
 
             bottleLiquid.localPosition = new Vector3(
                 liquidStartPosition.x,
-                bottomY + (newHeight * 0.5f),
+                bottomY + newHeight * 0.5f,
                 liquidStartPosition.z
             );
 
@@ -188,15 +198,11 @@ public class DragIngredient : MonoBehaviour
 
         Vector3 mousePosition = GetMouseWorldPosition();
 
-        if (Mouse.current.leftButton.wasPressedThisFrame)
+        if (Mouse.current.leftButton.wasPressedThisFrame &&
+            corkCollider.OverlapPoint(mousePosition))
         {
-            if (corkCollider.OverlapPoint(mousePosition))
-            {
-                isDraggingCork = true;
-
-                corkOffset =
-                    bottleCork.position - mousePosition;
-            }
+            isDraggingCork = true;
+            corkOffset = bottleCork.position - mousePosition;
         }
 
         if (isDraggingCork &&

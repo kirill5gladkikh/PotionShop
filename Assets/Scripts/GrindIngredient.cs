@@ -10,6 +10,9 @@ public class GrindIngredient : MonoBehaviour
     public float requiredMovement = 8f;
     public float movementThreshold = 1f;
 
+    [Header("Ingredients")]
+    public IngredientManager ingredientManager;
+
     [Header("Cauldron")]
     public Collider2D cauldronCollider;
     public SpriteRenderer potionLiquid;
@@ -47,7 +50,9 @@ public class GrindIngredient : MonoBehaviour
     private List<GameObject> herbPieces =
         new List<GameObject>();
 
-    private Vector3 transferStartPosition;
+    private List<Vector3> pieceStartPositions =
+        new List<Vector3>();
+
     private Vector3 transferOffset;
 
     private Color startingLiquidColor =
@@ -97,9 +102,22 @@ public class GrindIngredient : MonoBehaviour
             return;
         }
 
-        if (isAddedToCauldron)
+        // Stirring begins only after TWO ingredients
+        // have been added to the cauldron.
+        if (ingredientManager != null &&
+            ingredientManager.IsReadyToStir())
         {
             HandleStirring();
+            return;
+        }
+
+        // Herb has been added, but we still need
+        // another ingredient.
+        if (isAddedToCauldron)
+        {
+            StopGrindingSound();
+            StopStirringSound();
+            HideSpoon();
             return;
         }
 
@@ -179,10 +197,11 @@ public class GrindIngredient : MonoBehaviour
                 {
                     isFinished = true;
                     StopGrindingSound();
+
                     CreateHerbPieces();
                     spriteRenderer.enabled = false;
 
-                    Debug.Log("Ingredient fully ground!");
+                    Debug.Log("Herb fully ground!");
                 }
             }
             else
@@ -211,22 +230,20 @@ public class GrindIngredient : MonoBehaviour
             {
                 isTransferring = true;
 
-                transferStartPosition =
-                    herbPieces[0].transform.position;
-
                 transferOffset =
-                    transferStartPosition - mousePosition;
+                    herbPieces[0].transform.position -
+                    mousePosition;
             }
         }
 
         if (isTransferring &&
             Mouse.current.leftButton.isPressed)
         {
-            Vector3 newPosition =
+            Vector3 target =
                 mousePosition + transferOffset;
 
             Vector3 movement =
-                newPosition - herbPieces[0].transform.position;
+                target - herbPieces[0].transform.position;
 
             foreach (GameObject piece in herbPieces)
             {
@@ -250,6 +267,30 @@ public class GrindIngredient : MonoBehaviour
                 ResetPiecesPosition();
             }
         }
+    }
+
+    void AddToCauldron()
+    {
+        isAddedToCauldron = true;
+
+        foreach (GameObject piece in herbPieces)
+        {
+            if (piece != null)
+                Destroy(piece);
+        }
+
+        herbPieces.Clear();
+        pieceStartPositions.Clear();
+
+        // Register Herb in the shared ingredient system.
+        if (ingredientManager != null)
+        {
+            ingredientManager.AddIngredientToCauldron(
+                gameObject.name
+            );
+        }
+
+        Debug.Log("Herb added to cauldron!");
     }
 
     void HandleStirring()
@@ -379,7 +420,8 @@ public class GrindIngredient : MonoBehaviour
             potionLiquid.sprite == null)
             return;
 
-        GameObject bubble = new GameObject("PotionBubble");
+        GameObject bubble =
+            new GameObject("PotionBubble");
 
         SpriteRenderer bubbleRenderer =
             bubble.AddComponent<SpriteRenderer>();
@@ -414,6 +456,91 @@ public class GrindIngredient : MonoBehaviour
             new Vector3(size, size, 1f);
 
         Destroy(bubble, bubbleLifetime);
+    }
+
+    void CreateHerbPieces()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            GameObject piece =
+                new GameObject("HerbPiece");
+
+            SpriteRenderer pieceRenderer =
+                piece.AddComponent<SpriteRenderer>();
+
+            pieceRenderer.sprite = spriteRenderer.sprite;
+
+            pieceRenderer.color = new Color(
+                Random.Range(0.12f, 0.28f),
+                Random.Range(0.25f, 0.45f),
+                0.10f
+            );
+
+            pieceRenderer.sortingLayerID =
+                spriteRenderer.sortingLayerID;
+
+            pieceRenderer.sortingOrder =
+                spriteRenderer.sortingOrder + 1;
+
+            Vector2 offset =
+                Random.insideUnitCircle * 0.18f;
+
+            piece.transform.position =
+                transform.position +
+                new Vector3(offset.x, offset.y, 0);
+
+            float size =
+                Random.Range(0.08f, 0.18f);
+
+            piece.transform.localScale =
+                new Vector3(size, size, 1);
+
+            herbPieces.Add(piece);
+            pieceStartPositions.Add(piece.transform.position);
+        }
+    }
+
+    bool IsMouseOverPieces(Vector3 mousePosition)
+    {
+        foreach (GameObject piece in herbPieces)
+        {
+            if (piece == null)
+                continue;
+
+            if (Vector2.Distance(
+                mousePosition,
+                piece.transform.position
+            ) < 0.35f)
+                return true;
+        }
+
+        return false;
+    }
+
+    void ResetPiecesPosition()
+    {
+        for (int i = 0; i < herbPieces.Count; i++)
+        {
+            if (herbPieces[i] != null)
+            {
+                herbPieces[i].transform.position =
+                    pieceStartPositions[i];
+            }
+        }
+    }
+
+    Vector3 GetMouseWorldPosition()
+    {
+        Vector2 screenPosition =
+            Mouse.current.position.ReadValue();
+
+        Vector3 mousePosition = new Vector3(
+            screenPosition.x,
+            screenPosition.y,
+            -mainCamera.transform.position.z
+        );
+
+        return mainCamera.ScreenToWorldPoint(mousePosition);
     }
 
     void PlayStirringSound()
@@ -453,109 +580,5 @@ public class GrindIngredient : MonoBehaviour
     {
         if (spoonRenderer != null)
             spoonRenderer.enabled = false;
-    }
-
-    bool IsMouseOverPieces(Vector3 mousePosition)
-    {
-        foreach (GameObject piece in herbPieces)
-        {
-            if (piece == null)
-                continue;
-
-            if (Vector2.Distance(
-                mousePosition,
-                piece.transform.position
-            ) < 0.5f)
-                return true;
-        }
-
-        return false;
-    }
-
-    void AddToCauldron()
-    {
-        isAddedToCauldron = true;
-
-        foreach (GameObject piece in herbPieces)
-        {
-            if (piece != null)
-                Destroy(piece);
-        }
-
-        herbPieces.Clear();
-
-        if (potionLiquid != null)
-            potionLiquid.color = startingLiquidColor;
-
-        Debug.Log("Herbs added to cauldron!");
-    }
-
-    void ResetPiecesPosition()
-    {
-        Vector3 movement =
-            transferStartPosition -
-            herbPieces[0].transform.position;
-
-        foreach (GameObject piece in herbPieces)
-        {
-            if (piece != null)
-                piece.transform.position += movement;
-        }
-    }
-
-    Vector3 GetMouseWorldPosition()
-    {
-        Vector2 screenPosition =
-            Mouse.current.position.ReadValue();
-
-        Vector3 mousePosition = new Vector3(
-            screenPosition.x,
-            screenPosition.y,
-            -mainCamera.transform.position.z
-        );
-
-        return mainCamera.ScreenToWorldPoint(mousePosition);
-    }
-
-    void CreateHerbPieces()
-    {
-        for (int i = 0; i < 8; i++)
-        {
-            GameObject piece = new GameObject("HerbPiece");
-
-            SpriteRenderer pieceRenderer =
-                piece.AddComponent<SpriteRenderer>();
-
-            pieceRenderer.sprite = spriteRenderer.sprite;
-
-            pieceRenderer.color = new Color(
-                Random.Range(0.12f, 0.28f),
-                Random.Range(0.25f, 0.45f),
-                0.10f
-            );
-
-            pieceRenderer.sortingLayerID =
-                spriteRenderer.sortingLayerID;
-
-            pieceRenderer.sortingOrder =
-                spriteRenderer.sortingOrder + 1;
-
-            Vector2 offset =
-                Random.insideUnitCircle * 0.25f;
-
-            piece.transform.position =
-                transform.position + new Vector3(
-                    offset.x,
-                    offset.y,
-                    0
-                );
-
-            float size = Random.Range(0.08f, 0.18f);
-
-            piece.transform.localScale =
-                new Vector3(size, size, 1f);
-
-            herbPieces.Add(piece);
-        }
     }
 }

@@ -8,6 +8,7 @@ public class SceneNavigation : MonoBehaviour
     [Header("Brewing Station")]
     public GameObject returnButton;
     public DragIngredient ingredient;
+    public IngredientManager ingredientManager;
 
     [Header("Shop")]
     public TMP_Text orderText;
@@ -15,8 +16,21 @@ public class SceneNavigation : MonoBehaviour
     public GameObject serveButton;
 
     public static bool HasCompletedPotion = false;
+    public static string CompletedPotionName = "";
+
     public static int Coins = 0;
-    public static bool OrderCompleted = false;
+    public static int CurrentCustomer = 0;
+
+    private string[] potionNames =
+    {
+        "Healing Potion",
+        "Energy Potion",
+        "Sleep Potion"
+    };
+
+    private int[] rewards = { 20, 25, 30 };
+
+    private string customerMessage = "";
 
     void Start()
     {
@@ -28,13 +42,11 @@ public class SceneNavigation : MonoBehaviour
 
     void Update()
     {
-        if (returnButton != null && ingredient != null)
+        if (returnButton != null &&
+            ingredient != null &&
+            ingredient.IsCorkPlaced)
         {
-            if (ingredient.IsCorkPlaced &&
-                !returnButton.activeSelf)
-            {
-                returnButton.SetActive(true);
-            }
+            returnButton.SetActive(true);
         }
     }
 
@@ -47,62 +59,124 @@ public class SceneNavigation : MonoBehaviour
         if (coinsText != null)
             coinsText.text = "Coins: " + Coins;
 
+        bool allCompleted =
+            CurrentCustomer >= potionNames.Length;
+
         if (orderText != null)
         {
-            if (OrderCompleted)
+            if (allCompleted)
             {
                 orderText.text =
-                    "Thank you! This potion is perfect!";
+                    "All orders completed! Great job!";
+            }
+            else if (!string.IsNullOrEmpty(customerMessage))
+            {
+                orderText.text = customerMessage;
             }
             else
             {
                 orderText.text =
-                    "Hello! I need a healing potion!";
+                    "Hello! I need a " +
+                    potionNames[CurrentCustomer] + "!";
             }
         }
 
         if (serveButton != null)
-            serveButton.SetActive(!OrderCompleted);
+            serveButton.SetActive(!allCompleted);
     }
 
     public void ServePotion()
     {
-        if (OrderCompleted)
+        if (CurrentCustomer >= potionNames.Length)
             return;
 
         if (!HasCompletedPotion)
         {
-            Debug.Log("You need to brew a potion first!");
+            customerMessage =
+                "You haven't prepared my potion yet!";
+
+            UpdateShopUI();
             return;
         }
 
-        HasCompletedPotion = false;
-        OrderCompleted = true;
-        Coins += 20;
+        string requestedPotion =
+            potionNames[CurrentCustomer];
 
-        Debug.Log("Potion served! +20 coins");
+        if (CompletedPotionName != requestedPotion)
+        {
+            customerMessage =
+                "This isn't the potion I ordered! " +
+                "I need a " + requestedPotion + "!";
+
+            Debug.Log(
+                "Wrong potion: " + CompletedPotionName
+            );
+
+            HasCompletedPotion = false;
+            CompletedPotionName = "";
+
+            UpdateShopUI();
+            return;
+        }
+
+        int reward = rewards[CurrentCustomer];
+
+        Coins += reward;
+        HasCompletedPotion = false;
+        CompletedPotionName = "";
+        CurrentCustomer++;
+        customerMessage = "";
+
+        Debug.Log(
+            "Correct potion served! +" +
+            reward + " coins"
+        );
 
         UpdateShopUI();
     }
 
     public void OpenBrewingStation()
     {
-        if (OrderCompleted)
+        if (CurrentCustomer >= potionNames.Length)
         {
-            Debug.Log("Order already completed!");
+            Debug.Log("All orders completed!");
             return;
         }
 
         HasCompletedPotion = false;
+        CompletedPotionName = "";
+
         SceneManager.LoadScene("BrewingStation");
     }
 
     public void OpenShop()
     {
-        if (ingredient != null && ingredient.IsCorkPlaced)
+        if (ingredient == null ||
+            !ingredient.IsCorkPlaced)
         {
-            HasCompletedPotion = true;
+            Debug.LogWarning(
+                "The bottle must be sealed first!"
+            );
+            return;
         }
+
+        if (ingredientManager == null)
+        {
+            Debug.LogError(
+                "IngredientManager is not connected!"
+            );
+            return;
+        }
+
+        CompletedPotionName =
+            ingredientManager.PotionName;
+
+        HasCompletedPotion = true;
+
+        Debug.Log(
+            "Potion delivered to shop: " +
+            CompletedPotionName
+        );
 
         SceneManager.LoadScene("WinterPotionShop");
     }
