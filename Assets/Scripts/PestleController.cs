@@ -4,23 +4,20 @@ using UnityEngine.InputSystem;
 
 public class PestleController : MonoBehaviour
 {
-    [Header("Mortar")]
     public Collider2D mortarCollider;
-
-    [Header("Ingredients")]
     public DragIngredient herb;
     public IngredientSelector[] otherIngredients;
 
     private Camera mainCamera;
     private SpriteRenderer spriteRenderer;
     private GrindIngredient herbGrind;
-    private Vector3 startPosition;
+    private float originalZ;
 
     void Start()
     {
         mainCamera = Camera.main;
         spriteRenderer = GetComponent<SpriteRenderer>();
-        startPosition = transform.position;
+        originalZ = transform.position.z;
 
         if (herb != null)
             herbGrind = herb.GetComponent<GrindIngredient>();
@@ -30,49 +27,44 @@ public class PestleController : MonoBehaviour
 
     void Update()
     {
+        spriteRenderer.enabled = false;
+
         if (Mouse.current == null ||
             mainCamera == null ||
             mortarCollider == null)
-        {
-            HidePestle();
             return;
-        }
 
-        Vector2 screenPosition =
+        Vector2 screen =
             Mouse.current.position.ReadValue();
 
-        Vector3 worldPosition =
+        Vector3 world =
             mainCamera.ScreenToWorldPoint(
                 new Vector3(
-                    screenPosition.x,
-                    screenPosition.y,
+                    screen.x,
+                    screen.y,
                     -mainCamera.transform.position.z
                 )
             );
 
-        bool insideMortar =
-            mortarCollider.OverlapPoint(worldPosition);
+        if (!Mouse.current.leftButton.isPressed ||
+            !mortarCollider.OverlapPoint(world))
+            return;
 
-        bool canGrind = false;
-
-        // Проверяем обычную траву
-        if (herb != null &&
+        bool canGrind =
+            herb != null &&
             herbGrind != null &&
             herb.IsInMortar &&
-            !herbGrind.IsFinished)
-        {
-            canGrind = true;
-        }
+            !herbGrind.IsFinished;
 
-        // Проверяем остальные ингредиенты
         if (otherIngredients != null)
         {
-            foreach (IngredientSelector ingredient
-                in otherIngredients)
+            foreach (IngredientSelector item in otherIngredients)
             {
-                if (ingredient != null &&
-                    ingredient.IsSelected &&
-                    !ingredient.IsGround)
+                if (item != null &&
+                    item.processingType ==
+                        IngredientSelector.ProcessingType.Grinding &&
+                    item.IsSelected &&
+                    !item.IsGround)
                 {
                     canGrind = true;
                     break;
@@ -80,26 +72,15 @@ public class PestleController : MonoBehaviour
             }
         }
 
-        bool showPestle =
-            canGrind &&
-            Mouse.current.leftButton.isPressed &&
-            insideMortar;
+        if (!canGrind)
+            return;
 
-        spriteRenderer.enabled = showPestle;
+        spriteRenderer.enabled = true;
 
-        if (showPestle)
-        {
-            transform.position = new Vector3(
-                worldPosition.x,
-                worldPosition.y,
-                startPosition.z
-            );
-        }
-    }
-
-    void HidePestle()
-    {
-        if (spriteRenderer != null)
-            spriteRenderer.enabled = false;
+        transform.position = new Vector3(
+            world.x,
+            world.y,
+            originalZ
+        );
     }
 }

@@ -13,12 +13,15 @@ public class SceneNavigation : MonoBehaviour
     [Header("Shop")]
     public TMP_Text orderText;
     public TMP_Text coinsText;
+    public TMP_Text reputationText;
     public GameObject serveButton;
+    public CustomerAI customerAI;
 
     public static bool HasCompletedPotion = false;
     public static string CompletedPotionName = "";
 
     public static int Coins = 0;
+    public static int Reputation = 50;
     public static int CurrentCustomer = 0;
 
     private string[] potionNames =
@@ -37,14 +40,27 @@ public class SceneNavigation : MonoBehaviour
         if (returnButton != null)
             returnButton.SetActive(false);
 
+        SetupCustomer();
         UpdateShopUI();
     }
+
+
+    void SetupCustomer()
+    {
+        if (customerAI == null ||
+            CurrentCustomer >= potionNames.Length)
+            return;
+
+        customerAI.SetupCharacter(CurrentCustomer);
+    }
+
 
     void Update()
     {
         if (returnButton != null &&
             ingredient != null &&
-            ingredient.IsCorkPlaced)
+            ingredient.IsCorkPlaced &&
+            !returnButton.activeSelf)
         {
             returnButton.SetActive(true);
         }
@@ -58,6 +74,12 @@ public class SceneNavigation : MonoBehaviour
 
         if (coinsText != null)
             coinsText.text = "Coins: " + Coins;
+
+        if (reputationText != null)
+        {
+            reputationText.text =
+                "Reputation: " + Reputation + "/100";
+        }
 
         bool allCompleted =
             CurrentCustomer >= potionNames.Length;
@@ -104,13 +126,36 @@ public class SceneNavigation : MonoBehaviour
 
         if (CompletedPotionName != requestedPotion)
         {
-            customerMessage =
-                "This isn't the potion I ordered! " +
-                "I need a " + requestedPotion + "!";
-
-            Debug.Log(
-                "Wrong potion: " + CompletedPotionName
+            Reputation = Mathf.Clamp(
+                Reputation - 10, 0, 100
             );
+
+            if (customerAI != null)
+            {
+                customerAI.ReceiveWrongPotion();
+
+                if (customerAI.WillLeave())
+                {
+                    Debug.Log("Customer left the shop!");
+
+                    CurrentCustomer++;
+                    customerMessage = "";
+
+                    SetupCustomer();
+                }
+                else
+                {
+                    customerMessage =
+                        "Wrong potion! I need a " +
+                        requestedPotion + "!";
+                }
+            }
+            else
+            {
+                customerMessage =
+                    "Wrong potion! I need a " +
+                    requestedPotion + "!";
+            }
 
             HasCompletedPotion = false;
             CompletedPotionName = "";
@@ -122,17 +167,27 @@ public class SceneNavigation : MonoBehaviour
         int reward = rewards[CurrentCustomer];
 
         Coins += reward;
+
+        Reputation = Mathf.Clamp(
+            Reputation + 5, 0, 100
+        );
+
+        if (customerAI != null)
+            customerAI.ReceiveCorrectPotion();
+
         HasCompletedPotion = false;
         CompletedPotionName = "";
+
         CurrentCustomer++;
         customerMessage = "";
 
-        Debug.Log(
-            "Correct potion served! +" +
-            reward + " coins"
-        );
-
+        SetupCustomer();
         UpdateShopUI();
+
+        Debug.Log(
+            "Correct potion! +" + reward +
+            " coins, +5 reputation"
+        );
     }
 
     public void OpenBrewingStation()
@@ -172,11 +227,6 @@ public class SceneNavigation : MonoBehaviour
             ingredientManager.PotionName;
 
         HasCompletedPotion = true;
-
-        Debug.Log(
-            "Potion delivered to shop: " +
-            CompletedPotionName
-        );
 
         SceneManager.LoadScene("WinterPotionShop");
     }
