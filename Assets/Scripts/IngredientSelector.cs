@@ -29,20 +29,53 @@ public class IngredientSelector : MonoBehaviour
     [Header("Flower")]
     public float petalPullDistance = 0.3f;
 
-    [Header("Mushroom")]
-    public float mushroomPullDistance = 0.3f;
-
     [Header("Berry Juice")]
     public GameObject berryJuice;
     public float juiceExpansion = 1.5f;
 
-    [Header("Cutting")]
+    [Header("Cutting Knife")]
     public Transform cuttingKnife;
     public int requiredCuts = 3;
     public float minimumCutDistance = 0.25f;
 
+    [Header("New Root Sprites")]
+    public Sprite rootWhole;
+    public Sprite rootCut1;
+    public Sprite rootCut2;
+    public Sprite[] rootSlices = new Sprite[4];
+
+    [Header("Root Cut Guide")]
+    public SpriteRenderer cutGuide;
+
+    [Range(0f, 1f)]
+    public float guideFirstX = 0.25f;
+
+    [Range(0f, 1f)]
+    public float guideSecondX = 0.50f;
+
+    [Range(0f, 1f)]
+    public float guideThirdX = 0.75f;
+
+    public float guideYOffset = 0f;
+
+    [Range(0.01f, 0.4f)]
+    public float cutTolerance = 0.12f;
+
+    [Header("Guide Pulse")]
+    [Range(0f, 1f)]
+    public float guideMinAlpha = 0.35f;
+
+    [Range(0f, 1f)]
+    public float guideMaxAlpha = 1f;
+
+    public float guidePulseSpeed = 2.5f;
+
+    [Header("Final Root Slices")]
+    [Range(0.5f, 1.5f)]
+    public float rootSliceSize = 1f;
+
     [Range(0.5f, 1f)]
-    public float sliceWidthMultiplier = 0.80f;
+    public float sliceWidthMultiplier = 0.88f;
 
     [Header("Cauldron")]
     public Collider2D cauldronCollider;
@@ -57,7 +90,9 @@ public class IngredientSelector : MonoBehaviour
     private Vector3 originalScale;
     private Vector3 dragOffset;
     private Vector3 originalJuiceScale;
+
     private Color originalColor;
+    private Color guideOriginalColor;
 
     private bool isDragging;
     private bool isSelected;
@@ -69,29 +104,22 @@ public class IngredientSelector : MonoBehaviour
 
     private int actionCount;
     private int cutCount;
+
     private float grindProgress;
     private float knifeZ;
 
     private Vector2 lastMousePosition;
     private Vector3 cutStartMousePosition;
+    private Vector3 transferOffset;
 
     private Transform activePetal;
     private Vector3 petalStartPosition;
     private Vector3 petalDragOffset;
 
-    private Transform activeMushroomPart;
-    private Vector3 mushroomStartPosition;
-    private Vector3 mushroomDragOffset;
-
-    private Vector3 transferOffset;
+    private Bounds originalRootBounds;
+    private bool hasRootBounds;
 
     private readonly List<Collider2D> petals =
-        new List<Collider2D>();
-
-    private readonly List<Transform> rootSegments =
-        new List<Transform>();
-
-    private readonly List<Collider2D> mushroomParts =
         new List<Collider2D>();
 
     private readonly List<GameObject> pieces =
@@ -104,9 +132,9 @@ public class IngredientSelector : MonoBehaviour
     public bool IsGround => isGround;
     public bool IsAddedToCauldron => isAddedToCauldron;
 
-    // =====================================
+    // ==================================
     // INITIALIZATION
-    // =====================================
+    // ==================================
 
     void Start()
     {
@@ -128,21 +156,11 @@ public class IngredientSelector : MonoBehaviour
             berryJuice.SetActive(false);
         }
 
-        switch (processingType)
-        {
-            case ProcessingType.PetalPicking:
-                FindFlowerPetals();
-                break;
+        if (processingType == ProcessingType.PetalPicking)
+            FindFlowerPetals();
 
-            case ProcessingType.Cutting:
-                FindRootSegments();
-                InitializeKnife();
-                break;
-
-            case ProcessingType.Breaking:
-                FindMushroomParts();
-                break;
-        }
+        if (processingType == ProcessingType.Cutting)
+            InitializeRootCutting();
     }
 
     void Update()
@@ -162,11 +180,80 @@ public class IngredientSelector : MonoBehaviour
             HandleProcessing();
         else if (!isAddedToCauldron)
             HandleTransfer();
+
+        if (processingType == ProcessingType.Cutting)
+            UpdateCutGuide();
     }
 
-    // =====================================
-    // FIND CHILD OBJECTS
-    // =====================================
+    // ==================================
+    // INITIALIZE ROOT
+    // ==================================
+
+    void InitializeRootCutting()
+    {
+        if (spriteRenderer != null && rootWhole != null)
+        {
+            spriteRenderer.sprite = rootWhole;
+            spriteRenderer.enabled = true;
+        }
+
+        // Old rectangle segments are no longer used.
+        // Disable them, but do not destroy scene objects.
+        for (int i = 1; i <= 4; i++)
+        {
+            Transform oldSegment =
+                transform.Find("RootSegment" + i);
+
+            if (oldSegment != null)
+                oldSegment.gameObject.SetActive(false);
+        }
+
+        requiredCuts = 3;
+
+        if (cuttingKnife != null)
+        {
+            knifeRenderer =
+                cuttingKnife.GetComponent<SpriteRenderer>();
+
+            knifeZ = cuttingKnife.position.z;
+            HideKnife();
+        }
+
+        if (cutGuide == null)
+        {
+            Transform guide =
+                transform.Find("CutGuide");
+
+            if (guide != null)
+                cutGuide = guide.GetComponent<SpriteRenderer>();
+        }
+
+        if (cutGuide != null)
+        {
+            guideOriginalColor = cutGuide.color;
+            cutGuide.enabled = false;
+        }
+
+        if (rootWhole == null ||
+            rootCut1 == null ||
+            rootCut2 == null)
+        {
+            Debug.LogWarning(
+                name + ": Assign all three root stage sprites."
+            );
+        }
+
+        if (rootSlices == null || rootSlices.Length != 4)
+        {
+            Debug.LogWarning(
+                name + ": Assign four root slice sprites."
+            );
+        }
+    }
+
+    // ==================================
+    // FIND FLOWER PETALS
+    // ==================================
 
     void FindFlowerPetals()
     {
@@ -185,96 +272,9 @@ public class IngredientSelector : MonoBehaviour
         }
     }
 
-    void FindRootSegments()
-    {
-        rootSegments.Clear();
-
-        for (int i = 1; i <= 4; i++)
-        {
-            Transform segment =
-                transform.Find("RootSegment" + i);
-
-            if (segment != null)
-                rootSegments.Add(segment);
-        }
-
-        if (rootSegments.Count > 0 &&
-            spriteRenderer != null)
-        {
-            spriteRenderer.enabled = false;
-        }
-
-        if (rootSegments.Count >= 2)
-            requiredCuts = rootSegments.Count - 1;
-
-        if (rootSegments.Count != 4)
-        {
-            Debug.LogWarning(
-                name + ": Expected RootSegment1-4."
-            );
-        }
-    }
-
-    void FindMushroomParts()
-    {
-        mushroomParts.Clear();
-
-        string[] partNames =
-        {
-            "MushroomLeft",
-            "MushroomRight"
-        };
-
-        foreach (string partName in partNames)
-        {
-            Transform part = transform.Find(partName);
-
-            if (part == null)
-            {
-                Debug.LogWarning(
-                    name + ": Missing " + partName
-                );
-                continue;
-            }
-
-            Collider2D col =
-                part.GetComponent<Collider2D>();
-
-            if (col != null)
-            {
-                mushroomParts.Add(col);
-            }
-            else
-            {
-                Debug.LogWarning(
-                    partName + " needs a Collider2D."
-                );
-            }
-        }
-
-        if (mushroomParts.Count > 0 &&
-            spriteRenderer != null)
-        {
-            spriteRenderer.enabled = false;
-        }
-    }
-
-    void InitializeKnife()
-    {
-        if (cuttingKnife == null)
-            return;
-
-        knifeRenderer =
-            cuttingKnife.GetComponent<SpriteRenderer>();
-
-        knifeZ = cuttingKnife.position.z;
-
-        HideKnife();
-    }
-
-    // =====================================
-    // DRAG INGREDIENT TO WORKING AREA
-    // =====================================
+    // ==================================
+    // DRAG INGREDIENT
+    // ==================================
 
     void HandleDragging()
     {
@@ -288,39 +288,8 @@ public class IngredientSelector : MonoBehaviour
             foreach (Collider2D petal in petals)
             {
                 if (petal != null &&
+                    petal.enabled &&
                     petal.OverlapPoint(mouse))
-                {
-                    clickedIngredient = true;
-                    break;
-                }
-            }
-        }
-
-        if (processingType == ProcessingType.Cutting)
-        {
-            foreach (Transform segment in rootSegments)
-            {
-                if (segment == null)
-                    continue;
-
-                Collider2D col =
-                    segment.GetComponent<Collider2D>();
-
-                if (col != null &&
-                    col.OverlapPoint(mouse))
-                {
-                    clickedIngredient = true;
-                    break;
-                }
-            }
-        }
-
-        if (processingType == ProcessingType.Breaking)
-        {
-            foreach (Collider2D part in mushroomParts)
-            {
-                if (part != null &&
-                    part.OverlapPoint(mouse))
                 {
                     clickedIngredient = true;
                     break;
@@ -347,9 +316,7 @@ public class IngredientSelector : MonoBehaviour
             isDragging = false;
 
             bool insideArea =
-                processingArea.OverlapPoint(
-                    transform.position
-                );
+                processingArea.OverlapPoint(transform.position);
 
             if (insideArea &&
                 ingredientManager != null &&
@@ -374,6 +341,13 @@ public class IngredientSelector : MonoBehaviour
 
                 target.z = transform.position.z;
                 transform.position = target;
+
+                if (processingType == ProcessingType.Cutting)
+                {
+                    originalRootBounds = spriteRenderer.bounds;
+                    hasRootBounds = true;
+                    PositionCutGuide();
+                }
             }
             else
             {
@@ -382,31 +356,27 @@ public class IngredientSelector : MonoBehaviour
         }
     }
 
-    // =====================================
+    // ==================================
     // PROCESSING MODES
-    // =====================================
+    // ==================================
 
     void HandleProcessing()
     {
-        switch (processingType)
+        if (processingType == ProcessingType.PetalPicking)
         {
-            case ProcessingType.PetalPicking:
-                HandlePetalPicking();
-                return;
+            HandlePetalPicking();
+            return;
+        }
 
-            case ProcessingType.Cutting:
-                HandleCutting();
-                return;
-
-            case ProcessingType.Breaking:
-                HandleMushroomBreaking();
-                return;
+        if (processingType == ProcessingType.Cutting)
+        {
+            HandleCutting();
+            return;
         }
 
         Vector3 mouse = GetMouseWorldPosition();
 
-        bool insideArea =
-            processingArea.OverlapPoint(mouse);
+        bool insideArea = processingArea.OverlapPoint(mouse);
 
         if (processingType == ProcessingType.Grinding)
         {
@@ -432,134 +402,90 @@ public class IngredientSelector : MonoBehaviour
         }
     }
 
-    // =====================================
-    // MUSHROOM: ONE BREAK = TWO HALVES
-    // =====================================
+    // ==================================
+    // CUT GUIDE
+    // ==================================
 
-    void HandleMushroomBreaking()
+    float GetCurrentGuideFraction()
     {
-        Vector3 mouse = GetMouseWorldPosition();
+        if (cutCount == 0)
+            return guideFirstX;
 
-        if (Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            foreach (Collider2D part in mushroomParts)
-            {
-                if (part == null || !part.enabled)
-                    continue;
+        if (cutCount == 1)
+            return guideSecondX;
 
-                if (part.OverlapPoint(mouse))
-                {
-                    activeMushroomPart = part.transform;
-
-                    mushroomStartPosition =
-                        activeMushroomPart.position;
-
-                    mushroomDragOffset =
-                        activeMushroomPart.position - mouse;
-
-                    break;
-                }
-            }
-        }
-
-        if (activeMushroomPart == null)
-            return;
-
-        if (Mouse.current.leftButton.isPressed)
-        {
-            Vector3 target = mouse + mushroomDragOffset;
-
-            activeMushroomPart.position = new Vector3(
-                target.x,
-                target.y,
-                mushroomStartPosition.z
-            );
-        }
-
-        if (Mouse.current.leftButton.wasReleasedThisFrame)
-        {
-            float distance = Vector2.Distance(
-                mushroomStartPosition,
-                activeMushroomPart.position
-            );
-
-            if (distance >= mushroomPullDistance)
-            {
-                BreakMushroom();
-            }
-            else
-            {
-                activeMushroomPart.position =
-                    mushroomStartPosition;
-            }
-
-            activeMushroomPart = null;
-        }
+        return guideThirdX;
     }
 
-    void BreakMushroom()
+    Vector3 GetGuideWorldPosition()
     {
-        if (activeMushroomPart == null)
-            return;
+        float fraction = GetCurrentGuideFraction();
 
-        // One pull separates the entire mushroom.
-        // Both halves become prepared immediately.
+        float x = Mathf.Lerp(
+            originalRootBounds.min.x,
+            originalRootBounds.max.x,
+            fraction
+        );
 
-        foreach (Collider2D part in mushroomParts)
-        {
-            if (part == null)
-                continue;
+        float y =
+            originalRootBounds.center.y + guideYOffset;
 
-            Transform half = part.transform;
-
-            // Preserve current world position and scale.
-            Vector3 position = half.position;
-
-            half.SetParent(null, true);
-            half.position = position;
-
-            // Disable separate clicking.
-            part.enabled = false;
-
-            // Keep both halves on the working surface.
-            if (!processingArea.OverlapPoint(half.position))
-            {
-                Vector3 center =
-                    processingArea.bounds.center;
-
-                Vector2 offset =
-                    Random.insideUnitCircle * 0.15f;
-
-                half.position = new Vector3(
-                    center.x + offset.x,
-                    center.y + offset.y,
-                    half.position.z
-                );
-            }
-
-            // Only a small rotation for a broken look.
-            half.Rotate(
-                0f,
-                0f,
-                Random.Range(-8f, 8f)
-            );
-
-            pieces.Add(half.gameObject);
-            pieceStartPositions.Add(half.position);
-        }
-
-        mushroomParts.Clear();
-
-        FinishProcessing();
-
-        Debug.Log(
-            name + ": mushroom broken! 1/1"
+        return new Vector3(
+            x,
+            y,
+            transform.position.z
         );
     }
 
-    // =====================================
+    void PositionCutGuide()
+    {
+        if (cutGuide == null || !hasRootBounds)
+            return;
+
+        Vector3 guideWorld = GetGuideWorldPosition();
+
+        cutGuide.transform.position = new Vector3(
+            guideWorld.x,
+            guideWorld.y,
+            cutGuide.transform.position.z
+        );
+
+        cutGuide.enabled =
+            isSelected && !isGround;
+    }
+
+    void UpdateCutGuide()
+    {
+        if (cutGuide == null)
+            return;
+
+        if (!isSelected || isGround || !hasRootBounds)
+        {
+            cutGuide.enabled = false;
+            return;
+        }
+
+        if (!cutGuide.enabled)
+            cutGuide.enabled = true;
+
+        float pulse =
+            (Mathf.Sin(Time.time * guidePulseSpeed) + 1f)
+            * 0.5f;
+
+        Color color = guideOriginalColor;
+
+        color.a = Mathf.Lerp(
+            guideMinAlpha,
+            guideMaxAlpha,
+            pulse
+        );
+
+        cutGuide.color = color;
+    }
+
+    // ==================================
     // ROOT CUTTING
-    // =====================================
+    // ==================================
 
     void HandleCutting()
     {
@@ -567,9 +493,7 @@ public class IngredientSelector : MonoBehaviour
 
         if (Mouse.current.leftButton.wasPressedThisFrame)
         {
-            isCutting =
-                processingArea.OverlapPoint(mouse);
-
+            isCutting = processingArea.OverlapPoint(mouse);
             cutStartMousePosition = mouse;
         }
 
@@ -592,12 +516,7 @@ public class IngredientSelector : MonoBehaviour
         if (Mouse.current.leftButton.wasReleasedThisFrame)
         {
             if (isCutting)
-            {
-                TryCutRoot(
-                    cutStartMousePosition,
-                    mouse
-                );
-            }
+                TryCutRoot(cutStartMousePosition, mouse);
 
             isCutting = false;
             HideKnife();
@@ -606,7 +525,7 @@ public class IngredientSelector : MonoBehaviour
 
     void TryCutRoot(Vector3 start, Vector3 end)
     {
-        if (rootSegments.Count <= 1)
+        if (cutCount >= 3 || !hasRootBounds)
             return;
 
         Vector2 movement = end - start;
@@ -614,185 +533,165 @@ public class IngredientSelector : MonoBehaviour
         bool verticalSwipe =
             Mathf.Abs(movement.y) >= minimumCutDistance &&
             Mathf.Abs(movement.y) >=
-                Mathf.Abs(movement.x) * 0.7f;
+            Mathf.Abs(movement.x) * 0.7f;
 
         if (!verticalSwipe)
             return;
 
-        if (!TryGetRootBounds(out Bounds rootBounds))
+        float deltaY = end.y - start.y;
+
+        if (Mathf.Abs(deltaY) < 0.0001f)
             return;
 
-        if (!TryFindCutPosition(
-            start,
-            end,
-            rootBounds,
-            out Vector3 cutPosition))
-        {
-            return;
-        }
+        // Find where the mouse stroke crosses
+        // the vertical center of the root.
+        float t =
+            (originalRootBounds.center.y - start.y) /
+            deltaY;
 
-        Transform nearestSegment = null;
-        float closestDistance = float.MaxValue;
-
-        foreach (Transform segment in rootSegments)
-        {
-            if (segment == null)
-                continue;
-
-            SpriteRenderer renderer =
-                segment.GetComponent<SpriteRenderer>();
-
-            if (renderer == null)
-                continue;
-
-            float distance = Mathf.Abs(
-                renderer.bounds.center.x - cutPosition.x
-            );
-
-            if (distance < closestDistance)
-            {
-                closestDistance = distance;
-                nearestSegment = segment;
-            }
-        }
-
-        if (nearestSegment != null)
-            DetachRootSegment(nearestSegment);
-    }
-
-    bool TryGetRootBounds(out Bounds result)
-    {
-        result = new Bounds();
-        bool found = false;
-
-        foreach (Transform segment in rootSegments)
-        {
-            if (segment == null)
-                continue;
-
-            SpriteRenderer renderer =
-                segment.GetComponent<SpriteRenderer>();
-
-            if (renderer == null)
-                continue;
-
-            if (!found)
-            {
-                result = renderer.bounds;
-                found = true;
-            }
-            else
-            {
-                result.Encapsulate(renderer.bounds);
-            }
-        }
-
-        return found;
-    }
-
-    bool TryFindCutPosition(
-        Vector3 start,
-        Vector3 end,
-        Bounds rootBounds,
-        out Vector3 cutPosition)
-    {
-        cutPosition = Vector3.zero;
-
-        Rect rootRect = new Rect(
-            rootBounds.min.x - 0.10f,
-            rootBounds.min.y - 0.06f,
-            rootBounds.size.x + 0.20f,
-            rootBounds.size.y + 0.12f
-        );
-
-        const int samples = 60;
-
-        bool found = false;
-        float bestDistance = float.MaxValue;
-
-        for (int i = 0; i <= samples; i++)
-        {
-            float t = (float)i / samples;
-
-            Vector3 point =
-                Vector3.Lerp(start, end, t);
-
-            if (!rootRect.Contains(
-                new Vector2(point.x, point.y)))
-            {
-                continue;
-            }
-
-            float distance = Mathf.Abs(
-                point.y - rootBounds.center.y
-            );
-
-            if (distance < bestDistance)
-            {
-                bestDistance = distance;
-                cutPosition = point;
-                found = true;
-            }
-        }
-
-        return found;
-    }
-
-    void DetachRootSegment(Transform segment)
-    {
-        if (segment == null)
+        if (t < 0f || t > 1f)
             return;
 
-        rootSegments.Remove(segment);
-        PrepareRootSlice(segment);
+        float strokeX = Mathf.Lerp(start.x, end.x, t);
+
+        float correctX =
+            GetGuideWorldPosition().x;
+
+        float tolerance =
+            originalRootBounds.size.x * cutTolerance;
+
+        // The cut is accepted only near the
+        // glowing dashed guide.
+        if (Mathf.Abs(strokeX - correctX) > tolerance)
+            return;
+
+        // Require the stroke to actually pass
+        // through a meaningful part of the root.
+        float minimumVerticalCoverage =
+            originalRootBounds.size.y * 0.20f;
+
+        if (Mathf.Abs(movement.y) <
+            minimumVerticalCoverage)
+            return;
 
         cutCount++;
 
-        Debug.Log(
-            name + ": cut " +
-            cutCount + "/" + requiredCuts
-        );
-
-        // Four segments require three cuts.
-        // Final remaining segment becomes ready.
-        if (rootSegments.Count == 1)
+        if (cutCount == 1)
         {
-            Transform finalSegment =
-                rootSegments[0];
+            if (rootCut1 != null)
+                spriteRenderer.sprite = rootCut1;
 
-            rootSegments.Clear();
+            PositionCutGuide();
+        }
+        else if (cutCount == 2)
+        {
+            if (rootCut2 != null)
+                spriteRenderer.sprite = rootCut2;
 
-            PrepareRootSlice(finalSegment);
+            PositionCutGuide();
+        }
+        else
+        {
+            CreateFinalRootSlices();
             FinishProcessing();
         }
+
+        Debug.Log(
+            name + ": root cut " + cutCount + "/3"
+        );
     }
 
-    void PrepareRootSlice(Transform segment)
+    void CreateFinalRootSlices()
     {
-        if (segment == null)
+        if (rootSlices == null ||
+            rootSlices.Length != 4)
             return;
 
-        Vector3 position = segment.position;
+        float totalWidth = originalRootBounds.size.x;
+        float slotWidth = totalWidth / 4f;
 
-        segment.SetParent(null, true);
-        segment.position = position;
+        float desiredWidth =
+            slotWidth * sliceWidthMultiplier *
+            rootSliceSize;
 
-        Vector3 scale = segment.localScale;
+        float desiredHeight =
+            originalRootBounds.size.y *
+            rootSliceSize;
 
-        segment.localScale = new Vector3(
-            scale.x * sliceWidthMultiplier,
-            scale.y,
-            scale.z
-        );
+        for (int i = 0; i < 4; i++)
+        {
+            Sprite sliceSprite = rootSlices[i];
 
-        Collider2D col =
-            segment.GetComponent<Collider2D>();
+            if (sliceSprite == null)
+            {
+                Debug.LogWarning(
+                    name + ": Root_Slice" + (i + 1) +
+                    " is missing."
+                );
+                continue;
+            }
 
-        if (col != null)
-            col.enabled = false;
+            GameObject slice = new GameObject(
+                name + "_Slice" + (i + 1)
+            );
 
-        pieces.Add(segment.gameObject);
-        pieceStartPositions.Add(segment.position);
+            SpriteRenderer renderer =
+                slice.AddComponent<SpriteRenderer>();
+
+            renderer.sprite = sliceSprite;
+
+            renderer.sortingLayerID =
+                spriteRenderer.sortingLayerID;
+
+            renderer.sortingOrder =
+                spriteRenderer.sortingOrder + 1;
+
+            // Fit each separately cropped sprite
+            // inside one of the four root slots.
+            Vector2 size = sliceSprite.bounds.size;
+
+            float scaleX =
+                desiredWidth / Mathf.Max(0.001f, size.x);
+
+            float scaleY =
+                desiredHeight / Mathf.Max(0.001f, size.y);
+
+            float scale =
+                Mathf.Min(scaleX, scaleY);
+
+            slice.transform.localScale =
+                Vector3.one * scale;
+
+            float centerX =
+                originalRootBounds.min.x +
+                slotWidth * (i + 0.5f);
+
+            slice.transform.position = new Vector3(
+                centerX,
+                originalRootBounds.center.y,
+                transform.position.z
+            );
+
+            // Compensate for the sprite's own pivot
+            // so its visible bounds occupy the slot.
+            Bounds displayedBounds = renderer.bounds;
+
+            Vector3 correction =
+                slice.transform.position -
+                displayedBounds.center;
+
+            slice.transform.position += correction;
+
+            pieces.Add(slice);
+            pieceStartPositions.Add(
+                slice.transform.position
+            );
+        }
+
+        spriteRenderer.enabled = false;
+
+        if (cutGuide != null)
+            cutGuide.enabled = false;
     }
 
     void HideKnife()
@@ -801,9 +700,9 @@ public class IngredientSelector : MonoBehaviour
             knifeRenderer.enabled = false;
     }
 
-    // =====================================
+    // ==================================
     // FLOWER PETALS
-    // =====================================
+    // ==================================
 
     void HandlePetalPicking()
     {
@@ -819,13 +718,9 @@ public class IngredientSelector : MonoBehaviour
                 if (petal.OverlapPoint(mouse))
                 {
                     activePetal = petal.transform;
-
-                    petalStartPosition =
-                        activePetal.position;
-
+                    petalStartPosition = activePetal.position;
                     petalDragOffset =
                         activePetal.position - mouse;
-
                     break;
                 }
             }
@@ -879,9 +774,7 @@ public class IngredientSelector : MonoBehaviour
 
         detached.SetParent(null, true);
 
-        Vector3 center =
-            processingArea.bounds.center;
-
+        Vector3 center = processingArea.bounds.center;
         Vector2 offset =
             Random.insideUnitCircle * 0.25f;
 
@@ -904,13 +797,11 @@ public class IngredientSelector : MonoBehaviour
             FinishProcessing();
     }
 
-    // =====================================
+    // ==================================
     // GRINDING
-    // =====================================
+    // ==================================
 
-    void HandleGrinding(
-        bool insideArea,
-        Vector3 mouse)
+    void HandleGrinding(bool insideArea, Vector3 mouse)
     {
         Vector2 screen =
             Mouse.current.position.ReadValue();
@@ -936,8 +827,7 @@ public class IngredientSelector : MonoBehaviour
             lastMousePosition
         );
 
-        if (insideArea &&
-            movement > movementThreshold)
+        if (insideArea && movement > movementThreshold)
         {
             grindProgress += movement * 0.01f;
 
@@ -955,29 +845,27 @@ public class IngredientSelector : MonoBehaviour
         lastMousePosition = screen;
     }
 
-    // =====================================
-    // BERRY VISUALS
-    // =====================================
+    // ==================================
+    // BERRY
+    // ==================================
 
     void ApplyProcessingVisuals(float progress)
     {
         Vector3 targetScale = originalScale;
 
-        switch (processingType)
+        if (processingType == ProcessingType.Grinding)
         {
-            case ProcessingType.Grinding:
-                targetScale = originalScale * 0.4f;
-                break;
+            targetScale = originalScale * 0.4f;
+        }
+        else if (processingType == ProcessingType.Crushing)
+        {
+            targetScale = new Vector3(
+                originalScale.x * 1.4f,
+                originalScale.y * 0.25f,
+                originalScale.z
+            );
 
-            case ProcessingType.Crushing:
-                targetScale = new Vector3(
-                    originalScale.x * 1.4f,
-                    originalScale.y * 0.25f,
-                    originalScale.z
-                );
-
-                UpdateBerryJuice(progress);
-                break;
+            UpdateBerryJuice(progress);
         }
 
         transform.localScale = Vector3.Lerp(
@@ -1033,9 +921,9 @@ public class IngredientSelector : MonoBehaviour
         }
     }
 
-    // =====================================
+    // ==================================
     // FINISH PROCESSING
-    // =====================================
+    // ==================================
 
     void FinishProcessing()
     {
@@ -1053,9 +941,7 @@ public class IngredientSelector : MonoBehaviour
             if (center != null)
                 center.gameObject.SetActive(false);
         }
-        else if (
-            processingType != ProcessingType.Cutting &&
-            processingType != ProcessingType.Breaking)
+        else if (processingType != ProcessingType.Cutting)
         {
             CreatePieces();
 
@@ -1063,9 +949,7 @@ public class IngredientSelector : MonoBehaviour
                 berryJuice != null)
             {
                 berryJuice.transform.SetParent(null, true);
-
                 pieces.Add(berryJuice);
-
                 pieceStartPositions.Add(
                     berryJuice.transform.position
                 );
@@ -1075,12 +959,12 @@ public class IngredientSelector : MonoBehaviour
         if (spriteRenderer != null)
             spriteRenderer.enabled = false;
 
-        Debug.Log(name + " fully processed!");
+        if (cutGuide != null &&
+            processingType == ProcessingType.Cutting)
+        {
+            cutGuide.enabled = false;
+        }
     }
-
-    // =====================================
-    // CREATE PIECES FOR GRINDING / BERRY
-    // =====================================
 
     void CreatePieces()
     {
@@ -1128,9 +1012,9 @@ public class IngredientSelector : MonoBehaviour
         }
     }
 
-    // =====================================
+    // ==================================
     // TRANSFER TO CAULDRON
-    // =====================================
+    // ==================================
 
     void HandleTransfer()
     {
@@ -1143,6 +1027,7 @@ public class IngredientSelector : MonoBehaviour
             IsMouseOverPieces(mouse))
         {
             isTransferring = true;
+
             transferOffset =
                 pieces[0].transform.position - mouse;
         }
@@ -1183,11 +1068,28 @@ public class IngredientSelector : MonoBehaviour
     {
         foreach (GameObject piece in pieces)
         {
-            if (piece != null &&
-                Vector2.Distance(
-                    mouse,
-                    piece.transform.position
-                ) < 0.35f)
+            if (piece == null)
+                continue;
+
+            SpriteRenderer renderer =
+                piece.GetComponent<SpriteRenderer>();
+
+            if (renderer != null &&
+                renderer.bounds.Contains(
+                    new Vector3(
+                        mouse.x,
+                        mouse.y,
+                        renderer.bounds.center.z
+                    )
+                ))
+            {
+                return true;
+            }
+
+            if (Vector2.Distance(
+                mouse,
+                piece.transform.position
+            ) < 0.35f)
             {
                 return true;
             }
@@ -1231,9 +1133,7 @@ public class IngredientSelector : MonoBehaviour
         Debug.Log(name + " added to cauldron!");
     }
 
-    // =====================================
-    // NEW INPUT SYSTEM
-    // =====================================
+   
 
     Vector3 GetMouseWorldPosition()
     {
