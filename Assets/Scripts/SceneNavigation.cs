@@ -14,10 +14,11 @@ public class SceneNavigation : MonoBehaviour
     public TMP_Text orderText;
     public TMP_Text coinsText;
     public TMP_Text reputationText;
-    public GameObject serveButton;
     public CustomerAI customerAI;
 
-    // Kept for compatibility with existing scripts.
+    [Header("Customer Delivery")]
+    public SpriteRenderer customerSprite;
+
     public static bool HasCompletedPotion = false;
     public static string CompletedPotionName = "";
 
@@ -25,16 +26,33 @@ public class SceneNavigation : MonoBehaviour
     public static int Reputation = 50;
     public static int CurrentCustomer = 0;
 
-    private string[] potionNames =
+    private readonly string[] potionNames =
     {
         "Healing Potion",
         "Energy Potion",
         "Sleep Potion"
     };
 
-    private int[] rewards = { 20, 25, 30 };
+    private readonly int[] rewards = { 20, 25, 30 };
 
     private string customerMessage = "";
+    private bool cabinetFullMessageShown;
+
+    public bool HasActiveCustomer =>
+        CurrentCustomer < potionNames.Length;
+
+    // Reset everything when Play starts,
+    // including when Domain Reload is disabled.
+    [RuntimeInitializeOnLoadMethod(
+        RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetGameSession()
+    {
+        Coins = 0;
+        Reputation = 50;
+        CurrentCustomer = 0;
+        HasCompletedPotion = false;
+        CompletedPotionName = "";
+    }
 
     void Start()
     {
@@ -47,7 +65,6 @@ public class SceneNavigation : MonoBehaviour
 
     void Update()
     {
-        // Show return button after sealing the bottle.
         if (returnButton != null &&
             ingredient != null &&
             ingredient.IsCorkPlaced &&
@@ -55,19 +72,50 @@ public class SceneNavigation : MonoBehaviour
         {
             returnButton.SetActive(true);
         }
+
+        if (cabinetFullMessageShown)
+        {
+            PotionInventory inventory =
+                PotionInventory.Instance;
+
+            if (inventory != null && inventory.HasFreeSpace)
+            {
+                cabinetFullMessageShown = false;
+                customerMessage = "";
+                UpdateShopUI();
+            }
+        }
     }
 
-    // ==================================
-    // CUSTOMERS
-    // ==================================
+    // =================================
+    // COINS
+    // =================================
+
+    public static bool SpendCoins(int amount)
+    {
+        if (amount < 0 || Coins < amount)
+            return false;
+
+        Coins -= amount;
+        return true;
+    }
+
+    public static void AddCoins(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        Coins += amount;
+    }
+
+    // =================================
+    // CUSTOMER
+    // =================================
 
     void SetupCustomer()
     {
-        if (customerAI == null ||
-            CurrentCustomer >= potionNames.Length)
-        {
+        if (customerAI == null || !HasActiveCustomer)
             return;
-        }
 
         customerAI.SetupCharacter(CurrentCustomer);
     }
@@ -76,141 +124,227 @@ public class SceneNavigation : MonoBehaviour
     {
         if (SceneManager.GetActiveScene().name !=
             "WinterPotionShop")
-        {
             return;
-        }
 
         if (coinsText != null)
             coinsText.text = "Coins: " + Coins;
 
         if (reputationText != null)
-        {
             reputationText.text =
                 "Reputation: " + Reputation + "/100";
-        }
 
-        bool allCompleted =
-            CurrentCustomer >= potionNames.Length;
+        if (orderText == null)
+            return;
 
-        if (orderText != null)
+        if (cabinetFullMessageShown)
         {
-            if (allCompleted)
-            {
-                orderText.text =
-                    "All orders completed! " +
-                    "You can still brew potions!";
-            }
-            else if (!string.IsNullOrEmpty(customerMessage))
-            {
-                orderText.text = customerMessage;
-            }
-            else
-            {
-                orderText.text =
-                    "Hello! I need a " +
-                    potionNames[CurrentCustomer] + "!";
-            }
+            orderText.text =
+                "Your potion cabinet is full!\n" +
+                "Sell or discard a potion to make space.";
         }
-
-        if (serveButton != null)
-            serveButton.SetActive(!allCompleted);
+        else if (!string.IsNullOrEmpty(customerMessage))
+        {
+            orderText.text = customerMessage;
+        }
+        else if (!HasActiveCustomer)
+        {
+            orderText.text =
+                "All orders completed! " +
+                "You can still brew potions!";
+        }
+        else
+        {
+            orderText.text =
+                "Hello! I need a " +
+                potionNames[CurrentCustomer] + "!";
+        }
     }
 
-    // ==================================
-    // SERVING POTIONS
-    // ==================================
+    // =================================
+    // SCREEN-SPACE DELIVERY DETECTION
+    // =================================
 
-    public void ServePotion()
+    public bool IsBottleOverCustomer(Bounds bottleBounds)
     {
-        if (CurrentCustomer >= potionNames.Length)
-            return;
+        if (!HasActiveCustomer)
+            return false;
+
+        if (customerSprite == null ||
+            !customerSprite.enabled ||
+            !customerSprite.gameObject.activeInHierarchy ||
+            customerSprite.sprite == null)
+        {
+            Debug.LogWarning(
+                "Customer Sprite is not assigned or visible!"
+            );
+            return false;
+        }
+
+        Camera cam = Camera.main;
+
+        if (cam == null)
+        {
+            Debug.LogError("Main Camera not found!");
+            return false;
+        }
+
+        Rect bottleRect = WorldBoundsToScreenRect(
+            cam, bottleBounds
+        );
+
+        Rect customerRect = WorldBoundsToScreenRect(
+            cam, customerSprite.bounds
+        );
+
+        if (bottleRect.width <= 0 ||
+            bottleRect.height <= 0 ||
+            customerRect.width <= 0 ||
+            customerRect.height <= 0)
+        {
+            return false;
+        }
+
+        float overlapWidth = Mathf.Max(
+            0f,
+            Mathf.Min(bottleRect.xMax, customerRect.xMax) -
+            Mathf.Max(bottleRect.xMin, customerRect.xMin)
+        );
+
+        float overlapHeight = Mathf.Max(
+            0f,
+            Mathf.Min(bottleRect.yMax, customerRect.yMax) -
+            Mathf.Max(bottleRect.yMin, customerRect.yMin)
+        );
+
+        float overlapArea = overlapWidth * overlapHeight;
+        float bottleArea = bottleRect.width * bottleRect.height;
+
+        float overlapRatio =
+            overlapArea / Mathf.Max(1f, bottleArea);
+
+        bool accepted = overlapRatio >= 0.10f;
+
+        Debug.Log(
+            "Bottle/customer overlap: " +
+            (overlapRatio * 100f).ToString("F1") + "%" +
+            " | Target detected: " + accepted
+        );
+
+        return accepted;
+    }
+
+    private Rect WorldBoundsToScreenRect(
+        Camera cam,
+        Bounds bounds)
+    {
+        Vector3 min = bounds.min;
+        Vector3 max = bounds.max;
+
+        Vector3 a = cam.WorldToScreenPoint(
+            new Vector3(min.x, min.y, bounds.center.z)
+        );
+
+        Vector3 b = cam.WorldToScreenPoint(
+            new Vector3(max.x, min.y, bounds.center.z)
+        );
+
+        Vector3 c = cam.WorldToScreenPoint(
+            new Vector3(min.x, max.y, bounds.center.z)
+        );
+
+        Vector3 d = cam.WorldToScreenPoint(
+            new Vector3(max.x, max.y, bounds.center.z)
+        );
+
+        float left = Mathf.Min(a.x, b.x, c.x, d.x);
+        float right = Mathf.Max(a.x, b.x, c.x, d.x);
+        float bottom = Mathf.Min(a.y, b.y, c.y, d.y);
+        float top = Mathf.Max(a.y, b.y, c.y, d.y);
+
+        return Rect.MinMaxRect(
+            left, bottom, right, top
+        );
+    }
+
+    // =================================
+    // SELL EXACT SELECTED POTION
+    // =================================
+
+    public bool TryServePotion(int potionId)
+    {
+        if (!HasActiveCustomer)
+            return false;
 
         PotionInventory inventory =
             PotionInventory.Instance;
 
         if (inventory == null)
-        {
-            Debug.LogError(
-                "PotionInventory was not found!"
-            );
+            return false;
 
-            return;
-        }
+        PotionInventory.StoredPotion potion =
+            inventory.potions.Find(p => p.id == potionId);
+
+        if (potion == null || !inventory.IsReady(potion))
+            return false;
 
         string requestedPotion =
             potionNames[CurrentCustomer];
 
-        PotionInventory.StoredPotion readyPotion = null;
-        PotionInventory.StoredPotion infusingPotion = null;
+        string deliveredPotion = potion.potionName;
 
-        // Search for the potion requested by the customer.
-        foreach (var potion in inventory.potions)
+        if (!inventory.RemovePotion(potionId))
+            return false;
+
+        cabinetFullMessageShown = false;
+
+        if (deliveredPotion != requestedPotion)
         {
-            if (potion.potionName != requestedPotion)
-                continue;
+            Reputation = Mathf.Clamp(
+                Reputation - 10, 0, 100
+            );
 
-            if (inventory.IsReady(potion))
+            bool customerLeaves = false;
+
+            if (customerAI != null)
             {
-                readyPotion = potion;
-                break;
+                customerAI.ReceiveWrongPotion();
+                customerLeaves = customerAI.WillLeave();
             }
 
-            if (infusingPotion == null ||
-                inventory.GetRemainingTime(potion) <
-                inventory.GetRemainingTime(infusingPotion))
+            if (customerLeaves)
             {
-                infusingPotion = potion;
-            }
-        }
-
-        // No ready potion available.
-        if (readyPotion == null)
-        {
-            if (infusingPotion != null)
-            {
-                int secondsLeft = Mathf.CeilToInt(
-                    (float)inventory.GetRemainingTime(
-                        infusingPotion
-                    )
-                );
-
-                customerMessage =
-                    "Your potion is still infusing! " +
-                    secondsLeft + "s remaining.";
+                CurrentCustomer++;
+                customerMessage = "";
+                SetupCustomer();
             }
             else
             {
                 customerMessage =
-                    "No ready " + requestedPotion +
-                    " in stock!";
+                    "Wrong potion! I need a " +
+                    requestedPotion + "!";
             }
 
             UpdateShopUI();
-            return;
+
+            Debug.Log(
+                "Wrong potion delivered: " + deliveredPotion
+            );
+
+            return true;
         }
-
-        // Remove the sold bottle from inventory.
-        bool removed =
-            inventory.RemovePotion(readyPotion.id);
-
-        if (!removed)
-            return;
 
         int reward = rewards[CurrentCustomer];
 
-        Coins += reward;
+        AddCoins(reward);
 
         Reputation = Mathf.Clamp(
-            Reputation + 5,
-            0,
-            100
+            Reputation + 5, 0, 100
         );
 
         if (customerAI != null)
             customerAI.ReceiveCorrectPotion();
 
         CurrentCustomer++;
-
         customerMessage = "";
 
         HasCompletedPotion = false;
@@ -220,45 +354,55 @@ public class SceneNavigation : MonoBehaviour
         UpdateShopUI();
 
         Debug.Log(
-            "Sold " + requestedPotion +
+            "Sold " + deliveredPotion +
             "! +" + reward + " coins."
         );
+
+        return true;
     }
 
-    // ==================================
-    // ENTER BREWING STATION
-    // ==================================
+    // =================================
+    // BREWING
+    // =================================
 
     public void OpenBrewingStation()
     {
-        // Brewing is now always available.
-        // The player does not need an active order.
+        PotionInventory inventory =
+            PotionInventory.Instance;
+
+        if (inventory == null)
+        {
+            Debug.LogError("PotionInventory is missing!");
+            return;
+        }
+
+        if (!inventory.HasFreeSpace)
+        {
+            cabinetFullMessageShown = true;
+            UpdateShopUI();
+            return;
+        }
+
+        cabinetFullMessageShown = false;
 
         SceneManager.LoadScene("BrewingStation");
     }
 
-    // ==================================
-    // RETURN TO SHOP
-    // ==================================
-
     public void OpenShop()
     {
-        if (ingredient == null ||
-            !ingredient.IsCorkPlaced)
+        if (ingredient == null || !ingredient.IsCorkPlaced)
         {
             Debug.LogWarning(
                 "The bottle must be sealed first!"
             );
-
             return;
         }
 
         if (ingredientManager == null)
         {
             Debug.LogError(
-                "IngredientManager is not connected!"
+                "IngredientManager is missing!"
             );
-
             return;
         }
 
@@ -267,39 +411,45 @@ public class SceneNavigation : MonoBehaviour
 
         if (inventory == null)
         {
-            Debug.LogError(
-                "PotionInventory is missing! " +
-                "Add it to the WinterPotionShop scene."
-            );
-
+            Debug.LogError("PotionInventory is missing!");
             return;
         }
 
-        string potionName =
-            ingredientManager.PotionName;
+        string potionName = ingredientManager.PotionName;
 
         if (string.IsNullOrEmpty(potionName))
         {
             Debug.LogWarning(
                 "Potion recipe has not been identified!"
             );
-
             return;
         }
 
-        // Save the finished bottle.
-        // Infusion begins immediately.
-        inventory.AddPotion(potionName);
+        if (!inventory.AddPotion(potionName))
+        {
+            Debug.LogWarning(
+                "Cabinet full! Cannot store potion."
+            );
+            return;
+        }
 
-        Debug.Log(
-            potionName +
-            " added to inventory and started infusing!"
-        );
-
-        // Old instant-delivery system is disabled.
         HasCompletedPotion = false;
         CompletedPotionName = "";
 
+        SceneManager.LoadScene("WinterPotionShop");
+    }
+
+    // =================================
+    // UPGRADE SHOP
+    // =================================
+
+    public void OpenUpgradeShop()
+    {
+        SceneManager.LoadScene("UpgradeShop");
+    }
+
+    public void ReturnFromUpgradeShop()
+    {
         SceneManager.LoadScene("WinterPotionShop");
     }
 }
